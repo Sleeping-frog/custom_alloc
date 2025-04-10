@@ -200,7 +200,7 @@ void* alloc(size_t bytes) {
                             meta[j + 1] = meta[j];
                         meta[i + 1].size = size;
                         meta[i + 1].start = meta[i].start - size;
-                        return meta[0].start;
+                        return meta[i + 1].start;
                     }
                 }
                 if ((void*)meta[last_index].start - (void*)&meta[last_index + 1] >= sizeof(chunk_metadata) + size) {  // check if data fits to the left of the leftest data
@@ -323,7 +323,10 @@ void dealloc(void* ptr) {
         size_t meta_index = block_meta->chunks_count;
         start = 0;
         end = block_meta->chunks_count;
-         while (end - start > 0) {
+        if (ptr == meta[0].start) {
+            meta_index = 0;
+        }
+        else while (end - start > 1) {
             size_t mid = (start + end) / 2;
             if (ptr == meta[mid].start) {
                 meta_index = mid;
@@ -348,8 +351,74 @@ void dealloc(void* ptr) {
     abort();
 }
 
-void collect_garbage() {
 
+///////////////////////////// garbage collcetor /////////////////////////////
+
+
+void** stack_base;
+
+void init_garbage_collector() {
+    stack_base = __builtin_frame_address(1);
+}
+
+void collect_garbage() {
+    volatile void* cur_stack_end;
+    printf("Diff: %zu\n", (size_t)stack_base - (size_t)&cur_stack_end);
+    for (void** ptr_to_ptr = stack_base; ptr_to_ptr >= (void**)&cur_stack_end; --ptr_to_ptr) {
+        void* ptr = *ptr_to_ptr;
+        if (blocks_arr != NULL) {
+            size_t start = 0;
+            size_t end = blocks_size;
+            if (ptr > blocks_arr[0])
+                end = 0;
+            else 
+                while (end - start != 1) {
+                    size_t mid = (start + end) / 2;
+                    if (ptr < blocks_arr[mid]) 
+                        start = mid;
+                    else
+                        end = mid;
+                }
+            if (end == blocks_size) {  // if ptr is less than minimal block
+                continue;
+            }
+            block_metadata* block_meta = blocks_arr[end];
+            if (block_meta->chunks_count == 0) {  // if block is empty
+                continue;
+            }
+            if (ptr < (void*)block_meta + sizeof(block_metadata) || ptr > (void*)block_meta + block_meta->block_size) {  // if ptr is outside of block
+                continue;
+            }
+            chunk_metadata* meta = (void*)block_meta + sizeof(block_metadata);
+            size_t meta_index = block_meta->chunks_count;
+            start = 0;
+            end = block_meta->chunks_count;
+            unsigned i = 0;
+            if (ptr == meta[0].start) {
+                meta_index = 0;
+            }
+            else while (end - start > 1) {
+                //printf("%d\n", i++);
+                size_t mid = (start + end) / 2;
+                if (ptr == meta[mid].start) {
+                    meta_index = mid;
+                    break;
+                }
+                else if (ptr > meta[mid].start)
+                    end = mid;
+                else
+                    start = mid;
+            }
+            if (meta_index == block_meta->chunks_count) {
+                continue;
+            }
+            /*--block_meta->chunks_count;
+            for (int i = meta_index; i < block_meta->chunks_count; ++i) {
+                meta[i] = meta[i + 1];
+            }*/
+            printf("Found pointer: %p\t\t%p\n", meta[meta_index].start, ptr_to_ptr);
+        }
+    }
 }
 
 void debug_log() {
