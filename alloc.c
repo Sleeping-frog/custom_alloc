@@ -1,3 +1,4 @@
+#define _GNU_SOURCE     /* To get pthread_getattr_np() declaration */
 #include "alloc.h"
 #include <stdlib.h>
 #include <sys/mman.h>
@@ -5,6 +6,9 @@
 #include <stdbool.h> 
 #include <limits.h>
 #include <assert.h>
+#include "hashTable.h"
+#include "vector.h"
+#include <pthread.h>
  
 typedef struct block_mini_metadata {
     size_t block_size;
@@ -261,13 +265,11 @@ void dealloc(void* ptr) {
                     end = mid;
             }
         if (end == mini_blocks_size) {
-            fprintf(stderr, "dealloc() error: incorrect address\n");
-            abort();
+            return;
         }
         block_mini_metadata* block_meta = mini_blocks_arr[end];
         if (ptr < (void*)block_meta + sizeof(block_mini_metadata) || ptr > (void*)block_meta + block_meta->block_size) {
-            fprintf(stderr, "dealloc() error: incorrect address\n");
-            abort();
+            return;
         }
         mini_metadata* meta = (void*)block_meta + sizeof(block_mini_metadata);
         while (*meta != 0) {
@@ -355,70 +357,134 @@ void dealloc(void* ptr) {
 ///////////////////////////// garbage collcetor /////////////////////////////
 
 
-void** stack_base;
+vector_stack stacks = {0};
 
-void init_garbage_collector() {
-    stack_base = __builtin_frame_address(1);
+void add_thread_to_garbage_collector() {
+    if (stacks.capacity == 0)
+        vector_init(&stacks);
+    stack_attr attr;
+    pthread_attr_t pth_attr;
+    pthread_attr_init(&pth_attr);
+    pthread_getattr_np(pthread_self(), &pth_attr);
+    pthread_attr_getstack(&pth_attr, &attr.addr, &attr.size);
+    pthread_attr_destroy(&pth_attr);
+    vector_push_back(&stacks, attr);
+}
+
+void delete_thread_from_garbage_collector() {
+    stack_attr attr;
+    pthread_attr_t pth_attr;
+    pthread_attr_init(&pth_attr);
+    pthread_getattr_np(pthread_self(), &pth_attr);
+    pthread_attr_getstack(&pth_attr, &attr.addr, &attr.size);
+    pthread_attr_destroy(&pth_attr);
+    vector_delete(&stacks, attr.addr);
 }
 
 void collect_garbage() {
-    volatile void* cur_stack_end;
-    printf("Diff: %zu\n", (size_t)stack_base - (size_t)&cur_stack_end);
-    for (void** ptr_to_ptr = stack_base; ptr_to_ptr >= (void**)&cur_stack_end; --ptr_to_ptr) {
-        void* ptr = *ptr_to_ptr;
-        if (blocks_arr != NULL) {
-            size_t start = 0;
-            size_t end = blocks_size;
-            if (ptr > blocks_arr[0])
-                end = 0;
-            else 
-                while (end - start != 1) {
+    hashTable found_ptrs;
+    hash_init(&found_ptrs);
+    hash_insert(&found_ptrs, blocks_arr);
+    hash_insert(&found_ptrs, mini_blocks_arr);
+
+    // searching for all stored pointers
+    if (stacks.size > 0)
+    for (size_t i = 0; i < stacks.size; ++i) {
+        void* stack_addr = vector_at(&stacks, i)->addr;
+        size_t stack_size = vector_at(&stacks, i)->size;
+        for (void** ptr_to_ptr = stack_addr; ptr_to_ptr < (void**)(stack_addr + stack_size); ++ptr_to_ptr) {
+            void* ptr = *ptr_to_ptr;
+            if (blocks_arr != NULL) {
+                size_t start = 0;
+                size_t end = blocks_size;
+                if (ptr > blocks_arr[0])
+                    end = 0;
+                else 
+                    while (end - start != 1) {
+                        size_t mid = (start + end) / 2;
+                        if (ptr < blocks_arr[mid]) 
+                            start = mid;
+                        else
+                            end = mid;
+                    }
+                if (end == blocks_size) {  // if ptr is less than minimal block
+                    continue;
+                }
+                block_metadata* block_meta = blocks_arr[end];
+                if (block_meta->chunks_count == 0) {  // if block is empty
+                    continue;
+                }
+                if (ptr < (void*)block_meta + sizeof(block_metadata) || ptr > (void*)block_meta + block_meta->block_size) {  // if ptr is outside of block
+                    continue;
+                }
+                chunk_metadata* meta = (void*)block_meta + sizeof(block_metadata);
+                size_t meta_index = block_meta->chunks_count;
+                start = 0;
+                end = block_meta->chunks_count;
+                unsigned i = 0;
+                if (ptr == meta[0].start) {
+                    meta_index = 0;
+                }
+                else while (end - start > 1) {
                     size_t mid = (start + end) / 2;
-                    if (ptr < blocks_arr[mid]) 
-                        start = mid;
-                    else
+                    if (ptr == meta[mid].start) {
+                        meta_index = mid;
+                        break;
+                    }
+                    else if (ptr > meta[mid].start)
                         end = mid;
+                    else
+                        start = mid;
                 }
-            if (end == blocks_size) {  // if ptr is less than minimal block
-                continue;
-            }
-            block_metadata* block_meta = blocks_arr[end];
-            if (block_meta->chunks_count == 0) {  // if block is empty
-                continue;
-            }
-            if (ptr < (void*)block_meta + sizeof(block_metadata) || ptr > (void*)block_meta + block_meta->block_size) {  // if ptr is outside of block
-                continue;
-            }
-            chunk_metadata* meta = (void*)block_meta + sizeof(block_metadata);
-            size_t meta_index = block_meta->chunks_count;
-            start = 0;
-            end = block_meta->chunks_count;
-            unsigned i = 0;
-            if (ptr == meta[0].start) {
-                meta_index = 0;
-            }
-            else while (end - start > 1) {
-                //printf("%d\n", i++);
-                size_t mid = (start + end) / 2;
-                if (ptr == meta[mid].start) {
-                    meta_index = mid;
-                    break;
+                if (meta_index == block_meta->chunks_count) {
+                    continue;
                 }
-                else if (ptr > meta[mid].start)
-                    end = mid;
-                else
-                    start = mid;
+                hash_insert(&found_ptrs, meta[meta_index].start);
+                printf("Found pointer: %p\t\t%p\n", meta[meta_index].start, ptr_to_ptr);
             }
-            if (meta_index == block_meta->chunks_count) {
-                continue;
-            }
-            /*--block_meta->chunks_count;
-            for (int i = meta_index; i < block_meta->chunks_count; ++i) {
-                meta[i] = meta[i + 1];
-            }*/
-            printf("Found pointer: %p\t\t%p\n", meta[meta_index].start, ptr_to_ptr);
         }
     }
+
+    hash_insert(&found_ptrs, found_ptrs.table_ptr);
+    hash_insert(&found_ptrs, found_ptrs.states);
+
+    // deleting unused memory
+
+    // big blocks
+    for (block_metadata* block_meta = first_block_ptr; block_meta != NULL; block_meta = block_meta->next_block) {
+        size_t chunks_count = block_meta->chunks_count;
+        if (chunks_count == 0)
+            continue;
+        chunk_metadata* meta = (void*)block_meta + sizeof(block_metadata);
+        unsigned i = 0, j = 0;
+        while (j < chunks_count) {
+            if (hash_contains(&found_ptrs, meta[j].start)) {
+                if (i != j)
+                    meta[i] = meta[j];
+                ++i;
+            }
+            ++j;
+        }
+        block_meta->chunks_count = i;
+    }
+
+    // mini blocks
+    for (block_mini_metadata* block_meta = first_mini_block_ptr; block_meta != NULL; block_meta = block_meta->next_block) {
+        mini_metadata* meta = (void*)block_meta + sizeof(block_mini_metadata);
+        while (*meta != 0) {
+            int type = get_mini_type(meta);
+            size_t data_size = type == 0 ? 4 : type * 8;
+            for (int position = 61; position >= (type == 0 ? 1 : 0); --position) {  // if type is 00 then last bit is reserved and must not be deleted
+                if ((*meta & (1ULL << position) != 0) && !hash_contains(&found_ptrs, (void*)meta + sizeof(meta) + (61 - position) * data_size)) {
+                    size_t mask = ULLONG_MAX ^ (1ULL << position);
+                    *meta &= mask;
+                }
+            }
+            meta = (void*)meta + sizeof(mini_metadata) + data_size * 62;
+        }
+    }
+
+    hash_destroy(&found_ptrs);
 }
 
 void debug_log() {
