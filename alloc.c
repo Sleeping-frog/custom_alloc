@@ -357,11 +357,24 @@ void dealloc(void* ptr) {
 ///////////////////////////// garbage collcetor /////////////////////////////
 
 
+extern char __data_start;  // begin of section data 
+extern char _edata;        // end of section data
+extern char __bss_start;   // begin of section bss
+extern char _end;          // end of section bss
+
 vector_stack stacks = {0};
 
 void add_thread_to_garbage_collector() {
-    if (stacks.capacity == 0)
+    if (stacks.capacity == 0) {
         vector_init(&stacks);
+        stack_attr attr;
+        attr.addr = &__data_start;
+        attr.size = (void*)&_edata - (void*)&__data_start;
+        vector_push_back(&stacks, attr);
+        attr.addr = &__bss_start;
+        attr.size =  (void*)&_end - (void*)&__bss_start;
+        vector_push_back(&stacks, attr);
+    }
     stack_attr attr;
     pthread_attr_t pth_attr;
     pthread_attr_init(&pth_attr);
