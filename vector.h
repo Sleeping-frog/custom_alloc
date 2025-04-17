@@ -4,16 +4,16 @@
 typedef struct {
     void* addr;
     size_t size;
-} stack_attr;
+} vec_data;
 
 typedef struct {
     size_t size;
     size_t capacity;
-    stack_attr* ptr;
-} vector_stack;
+    vec_data* ptr;
+} vector;
 
-void vector_init(vector_stack* vec);
-void vector_destroy(vector_stack* vec);
-void vector_push_back(vector_stack* vec, stack_attr attr);
-void vector_delete(vector_stack* vec, void* address);
-stack_attr* vector_at(vector_stack* vec, size_t index);
+void vector_init(vector* vec);
+void vector_destroy(vector* vec);
+void vector_push_back(vector* vec, vec_data attr);
+void vector_delete(vector* vec, void* address);
+vec_data* vector_at(vector* vec, size_t index);
