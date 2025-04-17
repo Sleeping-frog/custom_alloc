@@ -4,11 +4,13 @@
 #include "alloc.h"
 #include "hashTable.h"
 
+const size_t size = 2 * 100;
+void* arr[200];
+
 int main() {
     add_thread_to_garbage_collector();
-    size_t size = 2 * 100;
-    void* arr[size];
-    for (int i = 0; i < 100; ++i) {
+
+    for (int i = 0; i < 10; ++i) {
         arr[i] = alloc(32);
     }
     for (int i = 0; i < 100; i += 2) {

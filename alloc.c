@@ -362,12 +362,12 @@ extern char _edata;        // end of section data
 extern char __bss_start;   // begin of section bss
 extern char _end;          // end of section bss
 
-vector_stack stacks = {0};
+vector stacks = {0};
 
 void add_thread_to_garbage_collector() {
     if (stacks.capacity == 0) {
         vector_init(&stacks);
-        stack_attr attr;
+        vec_data attr;
         attr.addr = &__data_start;
         attr.size = (void*)&_edata - (void*)&__data_start;
         vector_push_back(&stacks, attr);
@@ -375,7 +375,7 @@ void add_thread_to_garbage_collector() {
         attr.size =  (void*)&_end - (void*)&__bss_start;
         vector_push_back(&stacks, attr);
     }
-    stack_attr attr;
+    vec_data attr;
     pthread_attr_t pth_attr;
     pthread_attr_init(&pth_attr);
     pthread_getattr_np(pthread_self(), &pth_attr);
@@ -385,7 +385,7 @@ void add_thread_to_garbage_collector() {
 }
 
 void delete_thread_from_garbage_collector() {
-    stack_attr attr;
+    vec_data attr;
     pthread_attr_t pth_attr;
     pthread_attr_init(&pth_attr);
     pthread_getattr_np(pthread_self(), &pth_attr);
@@ -397,8 +397,6 @@ void delete_thread_from_garbage_collector() {
 void collect_garbage() {
     hashTable found_ptrs;
     hash_init(&found_ptrs);
-    hash_insert(&found_ptrs, blocks_arr);
-    hash_insert(&found_ptrs, mini_blocks_arr);
 
     // searching for all stored pointers
     if (stacks.size > 0)
@@ -452,14 +450,17 @@ void collect_garbage() {
                 if (meta_index == block_meta->chunks_count) {
                     continue;
                 }
-                hash_insert(&found_ptrs, meta[meta_index].start);
-                printf("Found pointer: %p\t\t%p\n", meta[meta_index].start, ptr_to_ptr);
+                void* found_pointer = meta[meta_index].start;
+                hash_insert(&found_ptrs, found_pointer);
+                printf("Found pointer: %p\t\t%p\n", found_pointer, ptr_to_ptr);
             }
         }
     }
 
     hash_insert(&found_ptrs, found_ptrs.table_ptr);
     hash_insert(&found_ptrs, found_ptrs.states);
+    hash_insert(&found_ptrs, blocks_arr);
+    hash_insert(&found_ptrs, mini_blocks_arr);
 
     // deleting unused memory
 
