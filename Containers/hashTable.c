@@ -1,5 +1,5 @@
 #include "hashTable.h"
-#include "alloc.h"
+#include "../alloc.h"
 
 #define LOAD_FACTOR 0.6
 

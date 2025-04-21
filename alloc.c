@@ -1,13 +1,13 @@
 #define _GNU_SOURCE     /* To get pthread_getattr_np() declaration */
 #include "alloc.h"
+#include "Containers/hashTable.h"
+#include "Containers/vector.h"
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <stdio.h>
 #include <stdbool.h> 
 #include <limits.h>
 #include <assert.h>
-#include "hashTable.h"
-#include "vector.h"
 #include <pthread.h>
  
 typedef struct block_mini_metadata {
@@ -394,68 +394,127 @@ void delete_thread_from_garbage_collector() {
     vector_delete(&stacks, attr.addr);
 }
 
+hashTable found_ptrs;
+
+void check_ptr(void* ptr) {
+    // part for big allocations
+    do if (blocks_arr != NULL) {
+        size_t start = 0;
+        size_t end = blocks_size;
+        if (ptr > blocks_arr[0])
+            end = 0;
+        else 
+            while (end - start != 1) {
+                size_t mid = (start + end) / 2;
+                if (ptr < blocks_arr[mid]) 
+                    start = mid;
+                else
+                    end = mid;
+            }
+        if (end == blocks_size) {  // if ptr is less than minimal block
+            break;
+        }
+        block_metadata* block_meta = blocks_arr[end];
+        if (block_meta->chunks_count == 0) {  // if block is empty
+            break;
+        }
+        if (ptr < (void*)block_meta + sizeof(block_metadata) || ptr > (void*)block_meta + block_meta->block_size) {  // if ptr is outside of block
+            break;
+        }
+        chunk_metadata* meta = (void*)block_meta + sizeof(block_metadata);
+        size_t meta_index = block_meta->chunks_count;
+        start = 0;
+        end = block_meta->chunks_count;
+        unsigned i = 0;
+        if (ptr == meta[0].start) {
+            meta_index = 0;
+        }
+        else while (end - start > 1) {
+            size_t mid = (start + end) / 2;
+            if (ptr == meta[mid].start) {
+                meta_index = mid;
+                break;
+            }
+            else if (ptr > meta[mid].start)
+                end = mid;
+            else
+                start = mid;
+        }
+        if (meta_index == block_meta->chunks_count) {
+            return;
+        }
+        void* found_pointer = meta[meta_index].start;
+        size_t found_size = meta[meta_index].size;
+        hash_insert(&found_ptrs, found_pointer);
+        for (void** rec_ptr = found_pointer; (void*)rec_ptr < found_pointer + found_size; ++rec_ptr) {
+            if (!hash_contains(&found_ptrs, *rec_ptr))
+                check_ptr(*rec_ptr);
+        }
+        return;
+    } while (false);
+
+    // part for mini allocations
+    if (mini_blocks_arr != NULL) {
+        size_t start = 0;
+        size_t end = mini_blocks_size;
+        if (ptr > mini_blocks_arr[0])
+            end = 0;
+        else
+            while (end - start != 1) {
+                size_t mid = (start + end) / 2;
+                if (ptr < mini_blocks_arr[mid])
+                    start = mid;
+                else
+                    end = mid;
+            }
+        if (end == mini_blocks_size) {
+            return;
+        }
+        block_mini_metadata* block_meta = mini_blocks_arr[end];
+        if (ptr < (void*)block_meta + sizeof(block_mini_metadata) || ptr > (void*)block_meta + block_meta->block_size) {
+            return;
+        }
+        mini_metadata* meta = (void*)block_meta + sizeof(block_mini_metadata);
+        while (*meta != 0) {
+            int type = get_mini_type(meta);
+            size_t data_size = type == 0 ? 4 : type * 8;
+            if (ptr < (void*)meta + sizeof(mini_metadata)) {
+                return;
+            }
+            if (ptr > (void*)meta + sizeof(mini_metadata) + data_size * 62) {  // if ptr is not in our mini chank
+                meta = (void*)meta + sizeof(mini_metadata) + data_size * 62;
+                continue;
+            }
+            size_t data_index = 61 - (ptr - ((void*)meta + sizeof(mini_metadata))) / data_size;
+            if (type == 0 && data_index == 0) {
+                return;
+            }
+            hash_insert(&found_ptrs, ptr);
+            if (type != 0)
+                for (void** rec_ptr = ptr; (void*)rec_ptr < ptr + data_size; ++rec_ptr) {
+                    if (!hash_contains(&found_ptrs, *rec_ptr))
+                        check_ptr(*rec_ptr);
+                }
+            return;
+        }
+    }
+}
+
 void collect_garbage() {
-    hashTable found_ptrs;
     hash_init(&found_ptrs);
 
     // searching for all stored pointers
-    if (stacks.size > 0)
-    for (size_t i = 0; i < stacks.size; ++i) {
-        void* stack_addr = vector_at(&stacks, i)->addr;
-        size_t stack_size = vector_at(&stacks, i)->size;
-        for (void** ptr_to_ptr = stack_addr; ptr_to_ptr < (void**)(stack_addr + stack_size); ++ptr_to_ptr) {
-            void* ptr = *ptr_to_ptr;
-            if (blocks_arr != NULL) {
-                size_t start = 0;
-                size_t end = blocks_size;
-                if (ptr > blocks_arr[0])
-                    end = 0;
-                else 
-                    while (end - start != 1) {
-                        size_t mid = (start + end) / 2;
-                        if (ptr < blocks_arr[mid]) 
-                            start = mid;
-                        else
-                            end = mid;
-                    }
-                if (end == blocks_size) {  // if ptr is less than minimal block
-                    continue;
-                }
-                block_metadata* block_meta = blocks_arr[end];
-                if (block_meta->chunks_count == 0) {  // if block is empty
-                    continue;
-                }
-                if (ptr < (void*)block_meta + sizeof(block_metadata) || ptr > (void*)block_meta + block_meta->block_size) {  // if ptr is outside of block
-                    continue;
-                }
-                chunk_metadata* meta = (void*)block_meta + sizeof(block_metadata);
-                size_t meta_index = block_meta->chunks_count;
-                start = 0;
-                end = block_meta->chunks_count;
-                unsigned i = 0;
-                if (ptr == meta[0].start) {
-                    meta_index = 0;
-                }
-                else while (end - start > 1) {
-                    size_t mid = (start + end) / 2;
-                    if (ptr == meta[mid].start) {
-                        meta_index = mid;
-                        break;
-                    }
-                    else if (ptr > meta[mid].start)
-                        end = mid;
-                    else
-                        start = mid;
-                }
-                if (meta_index == block_meta->chunks_count) {
-                    continue;
-                }
-                void* found_pointer = meta[meta_index].start;
-                hash_insert(&found_ptrs, found_pointer);
-                printf("Found pointer: %p\t\t%p\n", found_pointer, ptr_to_ptr);
+    if (stacks.size > 0) {
+        for (size_t i = 0; i < stacks.size; ++i) {
+            void* stack_addr = vector_at(&stacks, i)->addr;
+            size_t stack_size = vector_at(&stacks, i)->size;
+            for (void** ptr_to_ptr = stack_addr; ptr_to_ptr < (void**)(stack_addr + stack_size); ++ptr_to_ptr) {
+                void* ptr = *ptr_to_ptr;
+                check_ptr(ptr);
             }
         }
     }
+
 
     hash_insert(&found_ptrs, found_ptrs.table_ptr);
     hash_insert(&found_ptrs, found_ptrs.states);
