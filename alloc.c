@@ -9,7 +9,12 @@
 #include <limits.h>
 #include <assert.h>
 #include <pthread.h>
- 
+
+void* alloc_sub(size_t);
+void dealloc_sub(void*);
+
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
 typedef struct block_mini_metadata {
     size_t block_size;
     struct block_mini_metadata* next_block;
@@ -88,7 +93,7 @@ int get_mini_type(mini_metadata* meta) {
 void* alloc_mini(size_t bytes) {
     if (first_mini_block_ptr == NULL) {
         first_mini_block_ptr = alloc_mini_init_block(NULL);
-        mini_blocks_arr = alloc(4 * sizeof(void*));
+        mini_blocks_arr = alloc_sub(4 * sizeof(void*));
         mini_blocks_arr[0] = first_mini_block_ptr;
         mini_blocks_cap = 4;
         mini_blocks_size = 1;
@@ -131,13 +136,13 @@ void* alloc_mini(size_t bytes) {
         if (block_meta->next_block == NULL) {
             if (mini_blocks_cap - mini_blocks_size < 2 && !realloc_mini_blocks_arr) {
                 realloc_mini_blocks_arr = true;
-                void** tmp = alloc(2 * mini_blocks_cap * sizeof(void*));
+                void** tmp = alloc_sub(2 * mini_blocks_cap * sizeof(void*));
                 realloc_mini_blocks_arr = false;
                 mini_blocks_cap *= 2;
                 for (size_t i = 0; i < mini_blocks_size; ++i) {
                     tmp[i] = mini_blocks_arr[i];    
                 }
-                dealloc(mini_blocks_arr);
+                dealloc_sub(mini_blocks_arr);
                 mini_blocks_arr = tmp;
             }
             block_meta->next_block = alloc_mini_init_block();
@@ -158,7 +163,7 @@ void* alloc_mini(size_t bytes) {
     }
 }
  
-void* alloc(size_t bytes) {
+void* alloc_sub(size_t bytes) {
     if (bytes == 0)
         bytes = 4;
     if (bytes <= 24) 
@@ -168,7 +173,7 @@ void* alloc(size_t bytes) {
 
     if (first_block_ptr == NULL) {
         first_block_ptr = alloc_init_block(size);
-        blocks_arr = alloc(4 * sizeof(void*));
+        blocks_arr = alloc_sub(4 * sizeof(void*));
         blocks_arr[0] = first_block_ptr;
         blocks_cap = 4;
         blocks_size = 1;
@@ -218,13 +223,13 @@ void* alloc(size_t bytes) {
         if (block_meta->next_block == NULL) {
             if (blocks_cap - blocks_size < 2 && !realloc_blocks_arr) {
                 realloc_blocks_arr = true;
-                void** tmp = alloc(2 * blocks_cap * sizeof(void*));
+                void** tmp = alloc_sub(2 * blocks_cap * sizeof(void*));
                 realloc_blocks_arr = false;
                 blocks_cap *= 2;
                 for (size_t i = 0; i < blocks_size; ++i) {
                     tmp[i] = blocks_arr[i];    
                 }
-                dealloc(blocks_arr);
+                dealloc_sub(blocks_arr);
                 blocks_arr = tmp;
             }
             if (block_meta->next_block == NULL) {
@@ -248,8 +253,15 @@ void* alloc(size_t bytes) {
 
     return NULL;
 }
+
+void* alloc(size_t bytes) {
+    pthread_mutex_lock(&mutex);
+    void* res = alloc_sub(bytes);
+    pthread_mutex_unlock(&mutex);
+    return res;
+}
  
-void dealloc(void* ptr) {
+void dealloc_sub(void* ptr) {
     // part for mini allocations
     if (mini_blocks_arr != NULL) {
         size_t start = 0;
@@ -353,6 +365,12 @@ void dealloc(void* ptr) {
     abort();
 }
 
+void dealloc(void* ptr) {
+    pthread_mutex_lock(&mutex);
+    dealloc_sub(ptr);
+    pthread_mutex_unlock(&mutex);
+}
+
 
 ///////////////////////////// garbage collcetor /////////////////////////////
 
@@ -364,7 +382,7 @@ extern char _end;          // end of section bss
 
 vector stacks = {0};
 
-void add_thread_to_garbage_collector() {
+void add_thread_to_garbage_collector_sub() {
     if (stacks.capacity == 0) {
         vector_init(&stacks);
         vec_data attr;
@@ -384,7 +402,13 @@ void add_thread_to_garbage_collector() {
     vector_push_back(&stacks, attr);
 }
 
-void delete_thread_from_garbage_collector() {
+void add_thread_to_garbage_collector() {
+    pthread_mutex_lock(&mutex);
+    add_thread_to_garbage_collector_sub();
+    pthread_mutex_unlock(&mutex);
+}
+
+void delete_thread_from_garbage_collector_sub() {
     vec_data attr;
     pthread_attr_t pth_attr;
     pthread_attr_init(&pth_attr);
@@ -392,6 +416,13 @@ void delete_thread_from_garbage_collector() {
     pthread_attr_getstack(&pth_attr, &attr.addr, &attr.size);
     pthread_attr_destroy(&pth_attr);
     vector_delete(&stacks, attr.addr);
+}
+
+
+void delete_thread_from_garbage_collector() {
+    pthread_mutex_lock(&mutex);
+    delete_thread_from_garbage_collector();
+    pthread_mutex_unlock(&mutex);
 }
 
 hashTable found_ptrs;
@@ -500,7 +531,7 @@ void check_ptr(void* ptr) {
     }
 }
 
-void collect_garbage() {
+void collect_garbage_sub() {
     hash_init(&found_ptrs);
 
     // searching for all stored pointers
@@ -518,6 +549,7 @@ void collect_garbage() {
 
     hash_insert(&found_ptrs, found_ptrs.table_ptr);
     hash_insert(&found_ptrs, found_ptrs.states);
+    hash_insert(&found_ptrs, stacks.ptr);
     hash_insert(&found_ptrs, blocks_arr);
     hash_insert(&found_ptrs, mini_blocks_arr);
 
@@ -560,7 +592,13 @@ void collect_garbage() {
     hash_destroy(&found_ptrs);
 }
 
-void debug_log() {
+void collect_garbage() {
+    pthread_mutex_lock(&mutex);
+    collect_garbage_sub();
+    pthread_mutex_unlock(&mutex);
+}
+
+void debug_log_sub() {
     if (first_mini_block_ptr == NULL)
         printf("No mini allocations\n");
     else
@@ -692,4 +730,10 @@ void debug_log() {
             block_meta = block_meta->next_block;
         }
     }
+}
+
+void debug_log() {
+    pthread_mutex_lock(&mutex);
+    debug_log_sub();
+    pthread_mutex_unlock(&mutex);
 }

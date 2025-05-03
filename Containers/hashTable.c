@@ -1,6 +1,9 @@
 #include "hashTable.h"
 #include "../alloc.h"
 
+extern void* alloc_sub(size_t);
+extern void dealloc_sub(void*);
+
 #define LOAD_FACTOR 0.6
 
 unsigned primes[] = {53, 97, 193, 389, 769, 1543, 3079, 6151, 12289, 24593, 49157, 98317, 196613, 393241, 786433, 1572869, 3145739, 6291469, 12582917, 25165843, 50331653};
@@ -25,17 +28,17 @@ unsigned hash2(void* ptr) {
 void hash_init(hashTable* table) {
     table->size = primes[0];
     table->count = 0;
-    table->table_ptr = alloc(table->size * sizeof(void*));
-    table->states = alloc(table->size * sizeof(bool));
+    table->table_ptr = alloc_sub(table->size * sizeof(void*));
+    table->states = alloc_sub(table->size * sizeof(bool));
     for (unsigned i = 0; i < table->size; ++i) {
         table->states[i] = 0;  // 0 means empty
     }
 }
 
 void hash_destroy(hashTable* table) {
-    dealloc(table->table_ptr);
+    dealloc_sub(table->table_ptr);
     table->table_ptr = NULL;
-    dealloc(table->states);
+    dealloc_sub(table->states);
     table->states = NULL;
     table->count = 0;
 }
@@ -49,8 +52,8 @@ void rehash(hashTable* table) {
     hashTable tmp_table;
     tmp_table.size = new_size;
     tmp_table.count = 0;
-    tmp_table.table_ptr = alloc(new_size * sizeof(void*));
-    tmp_table.states = alloc(new_size * sizeof(bool));
+    tmp_table.table_ptr = alloc_sub(new_size * sizeof(void*));
+    tmp_table.states = alloc_sub(new_size * sizeof(bool));
     for (int i = 0; i < new_size; ++i) {
         tmp_table.states[i] = 0;
     }
@@ -58,9 +61,9 @@ void rehash(hashTable* table) {
         if (table->states[i] != 0)
             hash_insert(&tmp_table, table->table_ptr[i]);
     }
-    dealloc(table->table_ptr);
+    dealloc_sub(table->table_ptr);
     table->table_ptr = tmp_table.table_ptr;
-    dealloc(table->states);
+    dealloc_sub(table->states);
     table->states = tmp_table.states;
     table->size = tmp_table.size;
 }

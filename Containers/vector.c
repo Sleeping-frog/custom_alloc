@@ -1,14 +1,17 @@
 #include "vector.h"
 #include <stdio.h>
 
+extern void* alloc_sub(size_t);
+extern void dealloc_sub(void*);
+
 void vector_init(vector* vec) {
-    vec->ptr = alloc(4 * sizeof(vec_data));
+    vec->ptr = alloc_sub(4 * sizeof(vec_data));
     vec->capacity = 4;
     vec->size = 0;
 }
 
 void vector_destroy(vector* vec) {
-    dealloc(vec->ptr);
+    dealloc_sub(vec->ptr);
     vec->ptr = NULL;
     vec->capacity = 0;
     vec->size = 0;
@@ -16,10 +19,10 @@ void vector_destroy(vector* vec) {
 
 void vector_push_back(vector* vec, vec_data attr) {
     if (vec->size == vec->capacity) {  // if vector is full make new allocation
-        vec_data* tmp = alloc(2 * vec->capacity * sizeof(vec_data));
+        vec_data* tmp = alloc_sub(2 * vec->capacity * sizeof(vec_data));
         for (size_t i = 0; i < vec->capacity; ++i)
             tmp[i] = vec->ptr[i];
-        dealloc(vec->ptr);
+        dealloc_sub(vec->ptr);
         vec->ptr = tmp;
         vec->capacity *= 2;
     }
