@@ -66,6 +66,8 @@ void rehash(hashTable* table) {
     dealloc_sub(table->states);
     table->states = tmp_table.states;
     table->size = tmp_table.size;
+    hash_insert(table, table->states);
+    hash_insert(table, table->table_ptr);
 }
 
 void hash_insert(hashTable* table, void* val) {

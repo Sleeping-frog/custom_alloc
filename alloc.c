@@ -421,7 +421,7 @@ void delete_thread_from_garbage_collector_sub() {
 
 void delete_thread_from_garbage_collector() {
     pthread_mutex_lock(&mutex);
-    delete_thread_from_garbage_collector();
+    delete_thread_from_garbage_collector_sub();
     pthread_mutex_unlock(&mutex);
 }
 
@@ -546,9 +546,6 @@ void collect_garbage_sub() {
         }
     }
 
-
-    hash_insert(&found_ptrs, found_ptrs.table_ptr);
-    hash_insert(&found_ptrs, found_ptrs.states);
     hash_insert(&found_ptrs, stacks.ptr);
     hash_insert(&found_ptrs, blocks_arr);
     hash_insert(&found_ptrs, mini_blocks_arr);
@@ -598,7 +595,7 @@ void collect_garbage() {
     pthread_mutex_unlock(&mutex);
 }
 
-void debug_log_sub() {
+void log_memory_sub() {
     if (first_mini_block_ptr == NULL)
         printf("No mini allocations\n");
     else
@@ -732,8 +729,8 @@ void debug_log_sub() {
     }
 }
 
-void debug_log() {
+void log_memory() {
     pthread_mutex_lock(&mutex);
-    debug_log_sub();
+    log_memory_sub();
     pthread_mutex_unlock(&mutex);
 }

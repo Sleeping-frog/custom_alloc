@@ -8,5 +8,5 @@ void add_thread_to_garbage_collector();
 void delete_thread_from_garbage_collector();
 void collect_garbage();
 
-void debug_log();
+void log_memory();
 
